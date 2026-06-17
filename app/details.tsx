@@ -2,7 +2,7 @@ import { MaterialIcons } from '@expo/vector-icons'
 import * as Print from 'expo-print'
 import { router, useLocalSearchParams } from 'expo-router'
 import * as Sharing from 'expo-sharing'
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'; // Tambahkan useEffect
 import {
   Dimensions,
   Image,
@@ -13,10 +13,31 @@ import {
 } from 'react-native'
 import { LineChart } from 'react-native-chart-kit'
 import { SafeAreaView } from 'react-native-safe-area-context'
+// Tambahkan import Firebase
+import { collection, onSnapshot, orderBy, query } from 'firebase/firestore'
+import { db } from '../firebaseConfig'
+
+interface FirebaseReport {
+  id: string
+  author: string
+  date: string
+  type: 'Stable' | 'Warning' | 'Critical'
+  badgeBg: string
+  badgeText: string
+  xValue: string
+  yValue: string
+  valueColor: string
+  image: string | null
+  description: string
+  hasPhoto: boolean
+  isAlert: boolean
+  rawTimestamp: any
+}
 
 export default function DetailsScreen() {
   const params = useLocalSearchParams()
-
+  const projectId = (params.projectId as string) || ''
+  const pointId = (params.pointId as string) || ''
   // Set default values if params are not provided
   const title = (params.title as string) || 'Titik A - Dinding Barat'
   const status = (params.status as string) || 'CRITICAL'
@@ -26,6 +47,7 @@ export default function DetailsScreen() {
   const color = (params.color as string) || '#ba1a1a'
 
   const [activeFilter, setActiveFilter] = useState('All Reports')
+  const [reports, setReports] = useState<FirebaseReport[]>([])
   // Helper untuk membersihkan simbol "°" agar bisa dibaca sebagai angka oleh grafik
   const parseTilt = (val: string) => {
     return parseFloat(val.replace(/[^\d.-]/g, '')) || 0
@@ -90,8 +112,8 @@ export default function DetailsScreen() {
                     </thead>
                     <tbody>
                         ${filteredReports
-                          .map(
-                            (report) => `
+        .map(
+          (report) => `
                             <tr>
                                 <td><b>${report.author}</b><br/><span style="color:#74777d; font-size:10px;">${report.date}</span></td>
                                 <td><span style="color: ${report.isAlert ? '#ba1a1a' : '#137333'}; font-weight:bold;">${report.type}</span></td>
@@ -99,8 +121,8 @@ export default function DetailsScreen() {
                                 <td>${report.description}</td>
                             </tr>
                         `,
-                          )
-                          .join('')}
+        )
+        .join('')}
                     </tbody>
                 </table>
             </body>
@@ -159,84 +181,81 @@ export default function DetailsScreen() {
     legend: ['X-Tilt', 'Y-Tilt'],
   }
 
-  // Sample data matching the HTML
-  const reports = [
-    {
-      id: 1,
-      author: 'Sarah Jenkins',
-      date: 'Oct 24, 2023 • 14:32',
-      type: 'Critical',
-      badgeBg: 'bg-error/90',
-      badgeText: 'text-white',
-      xValue: '+4.2°',
-      yValue: '-1.8°',
-      valueColor: 'text-error',
-      image:
-        'https://lh3.googleusercontent.com/aida-public/AB6AXuCTnhgP-6KQxPUNrOG5ZKieSVjhiZ0V348-vwMAGkfKCHe6F7P5T0TO51bxRVmXQqgP6vK84zzGk_FjgPq5j9QTAhcWTnqpqmpN84AfS4iQvMrzKF4zKmjYcCp_PbF7pMMWzYqUxHoLGb2h96SK9ZYOynnYynrUhrHLzJvRhDnGD9BnsAzsr1aAy-1CWBKsC6S-JTv4VWMTr9jC9izmTauZoFEUBVrxBFP9zZW2gRdsDsiPbD3XqiCb88nM-xKnSu2QMmVfTNc6CO0',
-      description:
-        'Visual inspection confirms sensor reading. Hairline fracture extending 15cm from mounting bracket. Immediate monitoring advised.',
-      hasPhoto: true,
-      isAlert: true,
-    },
-    {
-      id: 2,
-      author: 'Marcus Vane',
-      date: 'Oct 23, 2023 • 09:15',
-      type: 'Warning',
-      badgeBg: 'bg-secondary-container',
-      badgeText: 'text-on-secondary-container',
-      xValue: '+2.1°',
-      yValue: '-0.9°',
-      valueColor: 'text-secondary',
-      image:
-        'https://lh3.googleusercontent.com/aida-public/AB6AXuAWavqIc01L6Nf_F1Gx34fqmxA0LMx7Z0B13BuGfQiYNIrFgJnzVwQPCifF4ZoIzmdBFSfnjCzyCXorjjGI9guVJCy9xCjEeXPdhJJv8XStITBbg3Cdc5XYiRQqkTnr4P2mLixRUMdm4u_Q2Xl6YFs304Dpqexjy0Hy7WQQMMbzGZlyW2xlEDrcwPuaZcK2wTXIH2i1DX2uJX1SPO7L-FSHPrb86T-rLxE6mEf8YvGPscsW-A3YuWPsSu9uOJS5rX8hNoGG9e7cW9I',
-      description:
-        'Slight deviation detected post-excavation nearby. No visual cracks found.',
-      hasPhoto: true,
-      isAlert: true,
-    },
-    {
-      id: 3,
-      author: 'Sarah Jenkins',
-      date: 'Oct 20, 2023 • 16:45',
-      type: 'Stable',
-      badgeBg: 'bg-[#137333]',
-      badgeText: 'text-white',
-      xValue: '+0.02°',
-      yValue: '+0.01°',
-      valueColor: 'text-[#137333]',
-      image:
-        'https://lh3.googleusercontent.com/aida-public/AB6AXuAEzKpo9TWYrPteihusPOQTXbFs29NtDIwERn4lMj1Sft4_QUHz-jJYMdX7APBzmHmoL3Tn3NbTw-O6Ma4rMOyZp6Ityfp9tQBq54GkG2hvZl-iLlmNsk3dsQugIYD_RO9WhtkYY8mRWG84XlkYM20AdOx0IDHaWP5gce1ZON7CruItApxKJ7NgURuAZjWaabgxWqFFyrg8zMqAJkDh41oSsCERX_Sh29H2f23y5GOW8ez1NoNs9OrMtdCbkTsIROh5jZvFc0jwoHo',
-      description:
-        'Initial baseline reading after sensor installation. Calibration successful.',
-      hasPhoto: true,
-      isAlert: false,
-    },
-    {
-      id: 4,
-      author: 'Team Lead Alpha',
-      date: 'Oct 19, 2023 • 08:00',
-      type: 'Stable',
-      badgeBg: 'bg-[#137333]',
-      badgeText: 'text-white',
-      xValue: '-0.01°',
-      yValue: '-0.02°',
-      valueColor: 'text-[#137333]',
-      image:
-        'https://lh3.googleusercontent.com/aida-public/AB6AXuC6e1HX3xKGILzn8A5AdXfDzJCTDp0p7ynWHUDxiUdvHLf0VLsq47y3exllCXNrgpQ9-YkayIYRKJU6pupTp40qtx2gfHSTP5W9VuSm7LSnEOJPP9zpcBGsA061i0fLwUGHHhs8UOteobGUIgrI1ROR-tEuJ7cveVxj6a5LSKq1-s1ZLPgrC5Oj3whkApw33MjMklxDW0S3ZEKhLzMl8c7Cw1xgCzw527DQVvUp9vrRjo4SawH0EMKYldV6U7Uo6RpmLdwiZTrzGYY',
-      description:
-        'Routine check. All structural elements within safety margins.',
-      hasPhoto: true,
-      isAlert: false,
-    },
-  ]
+  useEffect(() => {
+    if (!projectId || !pointId) return
 
-  // Filter logic
+    // Tunjuk path sub-collection: /projects/{projectId}/points/{pointId}/reports
+    const reportsRef = collection(db, 'projects', projectId, 'points', pointId, 'reports')
+    const q = query(reportsRef, orderBy('timestamp', 'desc'))
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const loadedReports: FirebaseReport[] = []
+
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data()
+
+        // Atur ambang batas peringatan mandiri untuk pewarnaan badge UI
+        const rawX = data.gyroX || 0
+        const rawY = data.gyroY || 0
+        const isCritical = Math.abs(rawX) > 4 || Math.abs(rawY) > 4
+        const isWarning = (Math.abs(rawX) > 2 && Math.abs(rawX) <= 4) || (Math.abs(rawY) > 2 && Math.abs(rawY) <= 4)
+
+        let reportType: 'Stable' | 'Warning' | 'Critical' = 'Stable'
+        let badgeBg = 'bg-[#137333]'
+        let valueColor = 'text-[#137333]'
+
+        if (isCritical) {
+          reportType = 'Critical'
+          badgeBg = 'bg-[#ba1a1a]'
+          valueColor = 'text-[#ba1a1a]'
+        } else if (isWarning) {
+          reportType = 'Warning'
+          badgeBg = 'bg-amber-600'
+          valueColor = 'text-amber-600'
+        }
+
+        // Format tanggal JavaScript sederhana dari Firebase Timestamp
+        const jsDate = data.timestamp?.toDate() ? data.timestamp.toDate() : new Date()
+        const formattedDate = jsDate.toLocaleDateString('id-ID', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        }) + ` • ${jsDate.getHours()}:${String(jsDate.getMinutes()).padStart(2, '0')}`
+
+        loadedReports.push({
+          id: docSnap.id,
+          author: data.submittedBy === 'anonymous' ? 'Teknisi Lapangan' : `User ID: ${data.submittedBy.substring(0, 6)}`,
+          date: formattedDate,
+          type: reportType,
+          badgeBg: badgeBg,
+          badgeText: 'text-white',
+          xValue: `${rawX >= 0 ? '+' : ''}${rawX.toFixed(2)}°`,
+          yValue: `${rawY >= 0 ? '+' : ''}${rawY.toFixed(2)}°`,
+          valueColor: valueColor,
+          image: data.photoUrl || null,
+          hasPhoto: !!data.photoUrl,
+          isAlert: isCritical || isWarning,
+          description: data.photoUrl
+            ? 'Laporan telemetri resmi disertai lampiran bukti dokumentasi foto fisik struktur bangunan dari lokasi kerja.'
+            : 'Laporan telemetri sensor mandiri tanpa lampiran dokumentasi visual perimeter.',
+          rawTimestamp: data.timestamp
+        })
+      })
+
+      setReports(loadedReports)
+    })
+
+    return () => unsubscribe()
+  }, [projectId, pointId])
+
+  // Filter logic (Tetap dipertahankan di bawah useEffect)
   const filteredReports = reports.filter((r) => {
     if (activeFilter === 'Photos') return r.hasPhoto
     if (activeFilter === 'Alerts Only') return r.isAlert
     return true
   })
+
+
 
   return (
     <SafeAreaView className="flex-1 bg-surface" style={{ flex: 1 }}>
@@ -361,11 +380,10 @@ export default function DetailsScreen() {
               <TouchableOpacity
                 key={filter}
                 onPress={() => setActiveFilter(filter)}
-                className={`px-4 py-2 rounded-full border ${
-                  isActive
+                className={`px-4 py-2 rounded-full border ${isActive
                     ? 'bg-primary border-primary'
                     : 'bg-surface-container-high border-outline-variant'
-                }`}
+                  }`}
               >
                 <Text
                   className={`text-xs font-bold ${isActive ? 'text-on-primary' : 'text-on-surface-variant'}`}
@@ -388,20 +406,16 @@ export default function DetailsScreen() {
               key={report.id}
               className="bg-white border border-outline-variant rounded-xl overflow-hidden flex-col"
             >
-              {/* Image Header if present */}
-              {report.hasPhoto && (
+              {/* Cari bagian rendering list gambar di return UI kamu, sesuaikan bagian ini */}
+              {report.hasPhoto && report.image && (
                 <View className="h-44 w-full relative">
                   <Image
-                    source={{ uri: report.image }}
+                    source={{ uri: report.image }} // Mengarah langsung ke url gambar string dinamis
                     className="w-full h-full"
                     resizeMode="cover"
                   />
-                  <View
-                    className={`absolute top-3 left-3 px-2 py-0.5 rounded ${report.badgeBg}`}
-                  >
-                    <Text
-                      className={`text-[10px] font-bold uppercase ${report.badgeText}`}
-                    >
+                  <View className={`absolute top-3 left-3 px-2 py-0.5 rounded ${report.badgeBg}`}>
+                    <Text className={`text-[10px] font-bold uppercase ${report.badgeText}`}>
                       {report.type}
                     </Text>
                   </View>

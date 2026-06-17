@@ -1,20 +1,68 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import React, { useState } from 'react';
-import { Image, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Image, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+// Impor Firebase Auth
+import { signOut, updateProfile } from 'firebase/auth';
+import { auth } from '../../firebaseConfig';
 
 export default function ProfileScreen() {
-    const [fullName, setFullName] = useState('Field Operator 04');
-    const [email, setEmail] = useState('operator04@alpha7.sys');
+    const [fullName, setFullName] = useState('');
+    const [email, setEmail] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
 
-    const handleLogout = () => {
-        // Log out logic, redirect back to login screen
-        router.replace('/auth/login');
+    // 1. Ambil data user saat pertama kali halaman diakses
+    useEffect(() => {
+        const currentUser = auth.currentUser;
+        console.log(currentUser);
+
+        if (currentUser) {
+            setFullName(currentUser.displayName || 'Teknisi Lapangan');
+            setEmail(currentUser.email || '');
+        }
+    }, []);
+
+    // 2. Fungsi untuk menyimpan perubahan nama ke Firebase Auth
+    const handleSaveIdentity = async () => {
+        if (!fullName.trim()) {
+            Alert.alert('Error', 'Nama lengkap tidak boleh kosong!');
+            return;
+        }
+
+        setIsSaving(true);
+        try {
+            const currentUser = auth.currentUser;
+
+            if (currentUser) {
+                // Update profile di sisi Firebase Auth Server
+                await updateProfile(currentUser, {
+                    displayName: fullName.trim()
+                });
+                Alert.alert('Sukses', 'Nama identitas berhasil diperbarui!');
+            }
+        } catch (error: any) {
+            console.error('Gagal memperbarui profil:', error);
+            Alert.alert('Gagal', `Terjadi kesalahan: ${error.message}`);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    // 3. Fungsi untuk menghancurkan token session login (Secure Logout)
+    const handleLogout = async () => {
+        try {
+            await signOut(auth);
+            // Bersihkan tumpukan navigasi dan lempar kembali ke halaman login
+            router.replace('/auth/login');
+        } catch (error) {
+            console.error('Gagal melakukan logout:', error);
+            Alert.alert('Error', 'Gagal memutus sesi login, silakan coba lagi.');
+        }
     };
 
     return (
-        <KeyboardAvoidingView 
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+        <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             className="flex-1 bg-background"
             style={{ flex: 1 }}
         >
@@ -31,8 +79,9 @@ export default function ProfileScreen() {
                 <View className="bg-white border border-outline-variant rounded-xl p-5 items-center gap-4 mb-6 shadow-sm relative overflow-hidden">
                     <View className="relative">
                         <View className="w-24 h-24 rounded-full bg-surface-container-high border-2 border-primary flex items-center justify-center overflow-hidden">
-                            <Image 
-                                source={{ uri: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAytXRPcjbZdngURbm5tiG3_024ekYdsivJwisGtvE9mneoShsAfSyOi5G9GlIIzFxI8bmmYA8h0kM5mQsl0JS2gt5ril2VvAdVdk-j1rhatto_me8pI7sbLHUCz4AJBsLape9U9Q_dccSBeQ-J3JCu9HnAmDiJFyANSyaAeqlXlDSoal6RsTedJVCRSNbC7i6_uugrEHXiK3RLEZhW0XE1FlVtr7Si5FxMuU75jcPTtHImKPtdFuVXIcVWC879j_o-deg2YTQVUFM' }} 
+                            <Image
+                                // Ambil foto dari firebase auth, jika kosong gunakan avatar dummy konstruksi standar
+                                source={{ uri: auth.currentUser?.photoURL || 'https://placehold.co/150/041627/FFF?text=Tech' }}
                                 className="w-full h-full"
                                 resizeMode="cover"
                             />
@@ -43,9 +92,12 @@ export default function ProfileScreen() {
                     </View>
 
                     <View className="items-center">
-                        <Text className="text-lg font-bold text-on-surface">{fullName}</Text>
+                        <Text className="text-lg font-bold text-on-surface">{fullName || 'Loading...'}</Text>
                         <View className="mt-2 px-2.5 py-1 bg-surface-container rounded-md">
-                            <Text className="text-[10px] font-bold text-on-surface-variant font-mono">ID: ALPHA-7-892</Text>
+                            {/* Menampilkan 5 digit terakhir UID sebagai ID Pekerja unik */}
+                            <Text className="text-[10px] font-bold text-on-surface-variant font-mono">
+                                ID: TECH-{auth.currentUser?.uid.substring(0, 5).toUpperCase() || 'ID'}
+                            </Text>
                         </View>
                     </View>
                 </View>
@@ -58,7 +110,7 @@ export default function ProfileScreen() {
 
                     <View className="gap-2">
                         <Text className="text-xs font-bold text-on-surface-variant">Full Name</Text>
-                        <TextInput 
+                        <TextInput
                             value={fullName}
                             onChangeText={setFullName}
                             className="w-full bg-surface border border-outline rounded-lg px-4 h-12 text-on-surface"
@@ -67,17 +119,26 @@ export default function ProfileScreen() {
 
                     <View className="gap-2">
                         <Text className="text-xs font-bold text-on-surface-variant">System Email</Text>
-                        <TextInput 
+                        <TextInput
                             value={email}
-                            onChangeText={setEmail}
-                            keyboardType="email-address"
-                            className="w-full bg-surface border border-outline rounded-lg px-4 h-12 text-on-surface"
+                            editable={false} // Aturan Best Practice: Email Firebase Auth tidak boleh diedit sembarangan lewat input biasa
+                            className="w-full bg-gray-100 border border-outline rounded-lg px-4 h-12 text-gray-500"
                         />
                     </View>
 
-                    <TouchableOpacity className="mt-2 w-full bg-surface-container-high h-12 rounded-lg border border-outline-variant flex-row items-center justify-center gap-2 active:scale-95">
-                        <MaterialIcons name="save" size={18} color="#041627" />
-                        <Text className="text-primary font-bold text-sm">Save Identity Changes</Text>
+                    <TouchableOpacity
+                        onPress={handleSaveIdentity}
+                        disabled={isSaving}
+                        className="mt-2 w-full bg-surface-container-high h-12 rounded-lg border border-outline-variant flex-row items-center justify-center gap-2 active:scale-95"
+                    >
+                        {isSaving ? (
+                            <ActivityIndicator size="small" color="#041627" />
+                        ) : (
+                            <>
+                                <MaterialIcons name="save" size={18} color="#041627" />
+                                <Text className="text-primary font-bold text-sm">Save Identity Changes</Text>
+                            </>
+                        )}
                     </TouchableOpacity>
                 </View>
 
@@ -95,7 +156,7 @@ export default function ProfileScreen() {
                         <MaterialIcons name="chevron-right" size={20} color="#74777d" />
                     </TouchableOpacity>
 
-                    <TouchableOpacity 
+                    <TouchableOpacity
                         onPress={handleLogout}
                         className="w-full bg-error h-12 rounded-lg flex-row items-center justify-center gap-2 shadow-sm active:scale-95"
                     >

@@ -1,10 +1,10 @@
 import { MaterialIcons } from '@expo/vector-icons'
 import { router } from 'expo-router'
-import { addDoc, collection, onSnapshot } from 'firebase/firestore'
+import { addDoc, collection, getDocs, onSnapshot, query, where } from 'firebase/firestore'
 import React, { useEffect, useState } from 'react'
 import { Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native'
-import { db } from '../../firebaseConfig' // Sesuaikan path
-import { useProjectStore } from '../../projectStore' // Sesuaikan path
+import { auth, db } from '../../firebaseConfig'; // Sesuaikan path
+import { useProjectStore } from '../../projectStore'; // Sesuaikan path
 
 interface MeasuringPoint {
   id: string
@@ -30,7 +30,7 @@ const StatCard = ({ title, value, icon, colorClass, bgColorClass }: any) => (
 )
 
 // Komponen Card Detail Sensor
-const SensorCard = ({ title, status, gyroX, gyroY, sensorId, color }: any) => (
+const SensorCard = ({ title, status, gyroX, gyroY, sensorId, color, projectId, pointId }: any) => (
   <View className="bg-white border border-outline-variant rounded-xl overflow-hidden mb-4 shadow-sm">
     <View className="flex-row">
       {/* Warna status kiri */}
@@ -73,7 +73,16 @@ const SensorCard = ({ title, status, gyroX, gyroY, sensorId, color }: any) => (
             onPress={() =>
               router.push({
                 pathname: '/details',
-                params: { title, status, gyroX, gyroY, sensorId, color },
+                params: {
+                  projectId, // SINKRONISASI: Kirim Project ID
+                  pointId,   // SINKRONISASI: Kirim Point ID
+                  title,
+                  status,
+                  gyroX,
+                  gyroY,
+                  sensorId,
+                  color
+                },
               })
             }
           >
@@ -90,6 +99,7 @@ const SensorCard = ({ title, status, gyroX, gyroY, sensorId, color }: any) => (
 export default function MonitorScreen() {
   const activeProjectId = useProjectStore((state) => state.activeProjectId)
   const [points, setPoints] = useState<MeasuringPoint[]>([])
+  const [userRole, setUserRole] = useState<string | null>(null)
   const handleCreatePoint = async (pointNameInput: string) => {
     if (!activeProjectId) return
     if (!pointNameInput.trim()) {
@@ -130,7 +140,31 @@ export default function MonitorScreen() {
   }
   useEffect(() => {
     if (!activeProjectId) return
+    const checkUserRole = async () => {
+      const currentUser = auth.currentUser
+      if (!currentUser) return
 
+      try {
+        const membersRef = collection(db, 'project_members')
+        // Query: Cari yang userId == user skrg DAN projectId == proyek aktif
+        const q = query(
+          membersRef,
+          where('userId', '==', currentUser.uid),
+          where('projectId', '==', activeProjectId)
+        )
+
+        const querySnapshot = await getDocs(q)
+        if (!querySnapshot.empty) {
+          // Ambil role dari dokumen pertama yang ditemukan ("mandor" atau "tukang")
+          const memberData = querySnapshot.docs[0].data()
+          setUserRole(memberData.role)
+        }
+      } catch (error) {
+        console.error("Gagal mengambil role user:", error)
+      }
+    }
+
+    checkUserRole()
     // Path sub-collection bertingkat
     const pointsRef = collection(db, 'projects', activeProjectId, 'points')
 
@@ -201,6 +235,8 @@ export default function MonitorScreen() {
             return (
               <SensorCard
                 key={point.id}
+                pointId={point.id}               // SINKRONISASI: Lempar ID Titik
+                projectId={activeProjectId}      // SINKRONISASI: Lempar ID Proyek Aktif
                 title={point.pointName}
                 status={point.currentStatus}
                 gyroX={point.gyroX}
@@ -213,13 +249,16 @@ export default function MonitorScreen() {
         )}
       </ScrollView>
 
-      {/* Floating Action Button */}
-      <TouchableOpacity
-        onPress={triggerAddPointPrompt}
-        className="absolute bottom-6 right-6 w-14 h-14 bg-primary rounded-xl items-center justify-center shadow-lg"
-      >
-        <MaterialIcons name="add" size={28} color="white" />
-      </TouchableOpacity>
+      {/* Floating Action Button - Hanya muncul jika user adalah mandor */}
+      {userRole === 'leader' && (
+        <TouchableOpacity
+          onPress={triggerAddPointPrompt}
+          className="absolute bottom-6 right-6 w-14 h-14 bg-primary rounded-xl items-center justify-center shadow-lg"
+        >
+          <MaterialIcons name="add" size={28} color="white" />
+
+        </TouchableOpacity>
+      )}
     </View>
   )
 }

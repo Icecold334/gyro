@@ -2,13 +2,25 @@ import { MaterialIcons } from '@expo/vector-icons'
 import * as ImagePicker from 'expo-image-picker'
 import { Gyroscope } from 'expo-sensors'
 import { Subscription } from 'expo-sensors/build/DeviceSensor'
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore'
+import { addDoc, collection, onSnapshot, serverTimestamp } from 'firebase/firestore'
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import React, { useEffect, useRef, useState } from 'react'
 import { Image, ScrollView, Text, TouchableOpacity, View } from 'react-native'
-import { auth, db, storage } from '../../firebaseConfig' // Sesuaikan dengan path file konfigurasi Anda
-
+import { auth, db, storage } from '../../firebaseConfig'; // Sesuaikan dengan path file konfigurasi Anda
+import { useProjectStore } from '../../projectStore'; // Tambahkan import store
+interface PointOption {
+  id: string
+  pointName: string
+}
 export default function GyroScreen() {
+  // 2. Ambil Project ID yang aktif dari Zustand
+  const activeProjectId = useProjectStore((state) => state.activeProjectId)
+
+  // 3. Siapkan state untuk menampung list titik ukur dan titik yang dipilih
+  const [points, setPoints] = useState<PointOption[]>([])
+  const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
+  const [selectedPointName, setSelectedPointName] = useState<string>('')
+  const [showDropdown, setShowDropdown] = useState(false) // Untuk membuka/tutup list pilihan
   const [data, setData] = useState({ x: 0, y: 0, z: 0 })
   const [subscription, setSubscription] = useState<Subscription | null>(null)
   const [smoothPos, setSmoothPos] = useState({ x: 0, y: 0 })
@@ -16,8 +28,34 @@ export default function GyroScreen() {
   const [isLocked, setIsLocked] = useState(false)
   const [lockedDeg, setLockedDeg] = useState({ x: '0.00', y: '0.00' })
   const isLockedRef = useRef(isLocked)
-
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // 4. Ambil data titik ukur secara real-time berdasarkan proyek yang aktif
+  useEffect(() => {
+    if (!activeProjectId) return
+
+    // Path menuju sub-collection points milik proyek aktif
+    const pointsRef = collection(db, 'projects', activeProjectId, 'points')
+
+    const unsubscribe = onSnapshot(pointsRef, (snapshot) => {
+      const options: PointOption[] = []
+      snapshot.forEach((doc) => {
+        options.push({
+          id: doc.id,
+          pointName: doc.data().pointName || 'Tanpa Nama',
+        })
+      })
+      setPoints(options)
+
+      // Auto-select titik pertama jika tersedia dan belum ada yang dipilih
+      if (options.length > 0 && !selectedPointId) {
+        setSelectedPointId(options[0].id)
+        setSelectedPointName(options[0].pointName)
+      }
+    })
+
+    return () => unsubscribe()
+  }, [activeProjectId])
 
   const handleSubmitReport = async () => {
     // Validasi: Pastikan data gyro sudah dikunci sebelum dikirim
@@ -25,22 +63,29 @@ export default function GyroScreen() {
       alert('Silakan kunci (Lock) data gyro terlebih dahulu!')
       return
     }
+    if (!selectedPointId) {
+      alert('Silakan pilih Target Measurement Point terlebih dahulu!')
+      return
+    }
 
     setIsSubmitting(true)
     try {
+
       // 1. Langsung susun path Sub-Collection ke Firestore sesuai blueprint
       // Sementara menggunakan "PROYEK_TEST" dan "TITIK_TEST" karena aturan hak akses (Fase 2&3) belum diintegrasikan
       const reportsRef = collection(
         db,
         'projects',
-        'PROYEK_TEST',
+        activeProjectId, // Menggunakan ID Proyek Aktif dari Zustand
         'points',
-        'TITIK_TEST',
+        selectedPointId, // Menggunakan ID Titik yang dipilih dari Dropdown
         'reports',
       )
 
       // 2. Kirim data angka gyro langsung ke Firestore
       await addDoc(reportsRef, {
+        projectId: activeProjectId, // TAMBAHKAN INI
+        pointName: selectedPointName, // TAMBAHKAN INI (ambil dari objek point yang dipilih)
         gyroX: Number(lockedDeg.x),
         gyroY: Number(lockedDeg.y),
         photoUrl: '', // Kita isi teks kosong dulu karena Storage dilewati
@@ -196,15 +241,50 @@ export default function GyroScreen() {
         </View>
 
         {/* Target Point Selection */}
-        <View className="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 mb-4">
+        <View className="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 mb-4 z-50">
           <Text className="font-semibold text-sm text-on-surface mb-2">
             Target Measurement Point
           </Text>
-          <View className="bg-surface border border-outline-variant rounded-lg px-4 h-12 justify-center">
-            <Text className="text-on-surface">
-              Select active sensor node...
+
+          {/* Tombol Pemicu Dropdown */}
+          <TouchableOpacity
+            onPress={() => setShowDropdown(!showDropdown)}
+            className="bg-surface border border-outline-variant rounded-lg px-4 h-12 flex-row items-center justify-between"
+          >
+            <Text className="text-on-surface font-medium">
+              {selectedPointName || 'Pilih Titik Sensor...'}
             </Text>
-          </View>
+            <MaterialIcons
+              name={showDropdown ? "arrow-drop-up" : "arrow-drop-down"}
+              size={24}
+              color="#74777d"
+            />
+          </TouchableOpacity>
+
+          {/* List Pilihan Item (Dropdown Menu) */}
+          {showDropdown && (
+            <View className="bg-white border border-outline-variant rounded-lg mt-2 overflow-hidden shadow-md">
+              {points.length === 0 ? (
+                <View className="p-3"><Text className="text-xs text-gray-400 text-center">Tidak ada titik tersedia</Text></View>
+              ) : (
+                points.map((point) => (
+                  <TouchableOpacity
+                    key={point.id}
+                    onPress={() => {
+                      setSelectedPointId(point.id)
+                      setSelectedPointName(point.pointName)
+                      setShowDropdown(false)
+                    }}
+                    className={`p-3 border-b border-surface-container-low active:bg-gray-100 ${selectedPointId === point.id ? 'bg-primary-container/20' : ''}`}
+                  >
+                    <Text className={`text-sm ${selectedPointId === point.id ? 'text-primary font-bold' : 'text-on-surface'}`}>
+                      {point.pointName}
+                    </Text>
+                  </TouchableOpacity>
+                ))
+              )}
+            </View>
+          )}
         </View>
 
         {/* Live Readout Section */}
@@ -254,7 +334,6 @@ export default function GyroScreen() {
               <Text className="text-[10px] text-on-surface-variant">
                 Y-AXIS
               </Text>
-              // Contoh untuk X-AXIS
               <Text className="text-inverse-on-surface font-bold text-lg">
                 {isLocked
                   ? Number(lockedDeg.y) >= 0
@@ -268,13 +347,15 @@ export default function GyroScreen() {
             </View>
           </View>
 
-          {/* Lock Button */}
+          {/* Lock / Unlock Button */}
           <TouchableOpacity
             onPress={toggleLock}
-            className="mt-8 w-full bg-primary h-12 rounded-lg flex-row items-center justify-center gap-2"
+            className={`mt-8 w-full h-12 rounded-lg flex-row items-center justify-center gap-2 ${isLocked ? 'bg-amber-600' : 'bg-primary'}`}
           >
-            <MaterialIcons name="lock-open" size={20} color="white" />
-            <Text className="text-on-primary font-bold">Lock Data</Text>
+            <MaterialIcons name={isLocked ? "lock" : "lock-open"} size={20} color="white" />
+            <Text className="text-white font-bold">
+              {isLocked ? 'Unlock Data' : 'Lock Data'}
+            </Text>
           </TouchableOpacity>
         </View>
 
