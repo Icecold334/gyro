@@ -2,12 +2,17 @@ import { MaterialIcons } from '@expo/vector-icons'
 import * as ImagePicker from 'expo-image-picker'
 import { Gyroscope } from 'expo-sensors'
 import { Subscription } from 'expo-sensors/build/DeviceSensor'
-import { addDoc, collection, onSnapshot, serverTimestamp } from 'firebase/firestore'
+import {
+  addDoc,
+  collection,
+  onSnapshot,
+  serverTimestamp,
+} from 'firebase/firestore'
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import React, { useEffect, useRef, useState } from 'react'
 import { Image, ScrollView, Text, TouchableOpacity, View } from 'react-native'
-import { auth, db, storage } from '../../firebaseConfig'; // Sesuaikan dengan path file konfigurasi Anda
-import { useProjectStore } from '../../projectStore'; // Tambahkan import store
+import { auth, db, storage } from '../../firebaseConfig' // Sesuaikan dengan path file konfigurasi Anda
+import { useProjectStore } from '../../projectStore' // Tambahkan import store
 interface PointOption {
   id: string
   pointName: string
@@ -58,7 +63,7 @@ export default function GyroScreen() {
   }, [activeProjectId])
 
   const handleSubmitReport = async () => {
-    // Validasi: Pastikan data gyro sudah dikunci sebelum dikirim
+    // Validasi 1: Pastikan data gyro sudah dikunci sebelum dikirim
     if (!isLocked) {
       alert('Silakan kunci (Lock) data gyro terlebih dahulu!')
       return
@@ -67,41 +72,53 @@ export default function GyroScreen() {
       alert('Silakan pilih Target Measurement Point terlebih dahulu!')
       return
     }
+    // Validasi 2 (Aturan Poin 3 Dokumen): Bukti fisik bersifat WAJIB
+    if (!imageUri) {
+      alert('Silakan ambil foto bukti fisik kondisi lapangan terlebih dahulu!')
+      return
+    }
 
     setIsSubmitting(true)
     try {
+      // ===== PROSES 1: UNGGAH FOTO KE GOOGLE CLOUD STORAGE =====
+      console.log('🔄 Memulai proses unggah foto ke Firebase Storage...')
+      const uploadedPhotoUrl = await uploadImageAsync(imageUri)
 
-      // 1. Langsung susun path Sub-Collection ke Firestore sesuai blueprint
-      // Sementara menggunakan "PROYEK_TEST" dan "TITIK_TEST" karena aturan hak akses (Fase 2&3) belum diintegrasikan
+      if (!uploadedPhotoUrl) {
+        alert('Gagal mengunggah gambar. Laporan dibatalkan.')
+        return
+      }
+      console.log('✅ Foto berhasil diunggah! URL:', uploadedPhotoUrl)
+
+      // ===== PROSES 2: SIMPAN DATA DAN URL FOTO KE FIRESTORE =====
       const reportsRef = collection(
         db,
         'projects',
-        activeProjectId, // Menggunakan ID Proyek Aktif dari Zustand
+        activeProjectId,
         'points',
-        selectedPointId, // Menggunakan ID Titik yang dipilih dari Dropdown
+        selectedPointId,
         'reports',
       )
 
-      // 2. Kirim data angka gyro langsung ke Firestore
       await addDoc(reportsRef, {
-        projectId: activeProjectId, // TAMBAHKAN INI
-        pointName: selectedPointName, // TAMBAHKAN INI (ambil dari objek point yang dipilih)
+        projectId: activeProjectId,
+        pointName: selectedPointName,
         gyroX: Number(lockedDeg.x),
         gyroY: Number(lockedDeg.y),
-        photoUrl: '', // Kita isi teks kosong dulu karena Storage dilewati
+        photoUrl: uploadedPhotoUrl, // 🚀 SEKARANG SUDAH TERIKAT DENGAN URL EMBED CLOUD STORAGE
         submittedBy: auth.currentUser?.uid || 'anonymous',
         timestamp: serverTimestamp(),
       })
 
-      alert('Data Gyro Berhasil Dikirim ke Firestore Database!')
+      alert('Data Gyro & Bukti Fisik Berhasil Dikirim ke Cloud!')
 
-      // 3. Reset tampilan form setelah berhasil kirim data
+      // ===== PROSES 3: RESET FORM =====
       setIsLocked(false)
       if (isLockedRef) isLockedRef.current = false
-      setImageUri(null) // Reset preview foto jika ada
+      setImageUri(null) // Reset kotak preview kamera kembali kosong
     } catch (error) {
-      console.error('Gagal mengirim data gyro:', error)
-      alert('Terjadi kesalahan saat mengirim data.')
+      console.error('Gagal mengirim data laporan komplit:', error)
+      alert('Terjadi kesalahan saat mengirim laporan.')
     } finally {
       setIsSubmitting(false)
     }
@@ -255,7 +272,7 @@ export default function GyroScreen() {
               {selectedPointName || 'Pilih Titik Sensor...'}
             </Text>
             <MaterialIcons
-              name={showDropdown ? "arrow-drop-up" : "arrow-drop-down"}
+              name={showDropdown ? 'arrow-drop-up' : 'arrow-drop-down'}
               size={24}
               color="#74777d"
             />
@@ -265,7 +282,11 @@ export default function GyroScreen() {
           {showDropdown && (
             <View className="bg-white border border-outline-variant rounded-lg mt-2 overflow-hidden shadow-md">
               {points.length === 0 ? (
-                <View className="p-3"><Text className="text-xs text-gray-400 text-center">Tidak ada titik tersedia</Text></View>
+                <View className="p-3">
+                  <Text className="text-xs text-gray-400 text-center">
+                    Tidak ada titik tersedia
+                  </Text>
+                </View>
               ) : (
                 points.map((point) => (
                   <TouchableOpacity
@@ -277,7 +298,9 @@ export default function GyroScreen() {
                     }}
                     className={`p-3 border-b border-surface-container-low active:bg-gray-100 ${selectedPointId === point.id ? 'bg-primary-container/20' : ''}`}
                   >
-                    <Text className={`text-sm ${selectedPointId === point.id ? 'text-primary font-bold' : 'text-on-surface'}`}>
+                    <Text
+                      className={`text-sm ${selectedPointId === point.id ? 'text-primary font-bold' : 'text-on-surface'}`}
+                    >
                       {point.pointName}
                     </Text>
                   </TouchableOpacity>
@@ -352,7 +375,11 @@ export default function GyroScreen() {
             onPress={toggleLock}
             className={`mt-8 w-full h-12 rounded-lg flex-row items-center justify-center gap-2 ${isLocked ? 'bg-amber-600' : 'bg-primary'}`}
           >
-            <MaterialIcons name={isLocked ? "lock" : "lock-open"} size={20} color="white" />
+            <MaterialIcons
+              name={isLocked ? 'lock' : 'lock-open'}
+              size={20}
+              color="white"
+            />
             <Text className="text-white font-bold">
               {isLocked ? 'Unlock Data' : 'Lock Data'}
             </Text>

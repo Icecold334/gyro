@@ -3,9 +3,11 @@ import { router } from 'expo-router'
 import {
   addDoc,
   collection,
+  doc,
   getDocs,
   onSnapshot,
   query,
+  updateDoc,
   where,
 } from 'firebase/firestore'
 import React, { useEffect, useState } from 'react'
@@ -20,6 +22,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { auth, db } from '../firebaseConfig'
 import { useProjectStore } from '../projectStore' // Sesuaikan path-nya
+import { registerForPushNotificationsAsync } from '../utils/registerForPushNotifications' // Pastikan path folder utils ini sudah benar
 
 interface ProjectMember {
   id: string
@@ -34,6 +37,20 @@ export default function WorkspacesScreen() {
   useEffect(() => {
     const currentUser = auth.currentUser
     if (!currentUser) return
+
+    async function saveNotificationToken() {
+      try {
+        const token = await registerForPushNotificationsAsync()
+        if (token) {
+          const userRef = doc(db, 'users', currentUser.uid)
+          await updateDoc(userRef, { fcmToken: token })
+          console.log('🚀 FCM Token berhasil disimpan ke Firestore!')
+        }
+      } catch (err) {
+        console.error('Gagal memperbarui FCM Token:', err)
+      }
+    }
+    saveNotificationToken()
 
     // Ambil data dari project_members milik user yang sedang login
     const q = query(
