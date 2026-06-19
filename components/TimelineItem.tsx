@@ -10,10 +10,18 @@ interface TimelineItemProps {
     location?: string;
     content: string;
     gyroData?: { x: string; y: string };
-    imageUri?: string;
+    imageUri?: string;        // Foto profil user (avatar bubble)
+    reportPhotoUri?: string;  // Foto bukti fisik lapangan
 }
 
-export const TimelineItem = ({ type, time, name, role, location, content, gyroData, imageUri }: TimelineItemProps) => {
+const getInitials = (name?: string) => {
+    if (!name || name === 'Teknisi') return 'TK';
+    const words = name.split(' ');
+    if (words.length === 1) return words[0].charAt(0).toUpperCase();
+    return (words[0].charAt(0) + words[1].charAt(0)).toUpperCase();
+};
+
+export const TimelineItem = ({ type, time, name, role, location, content, gyroData, imageUri, reportPhotoUri }: TimelineItemProps) => {
     const isAlert = type === 'alert';
 
     return (
@@ -35,8 +43,12 @@ export const TimelineItem = ({ type, time, name, role, location, content, gyroDa
                 {type !== 'system' && (
                     <View className="flex-row justify-between items-start mb-3">
                         <View className="flex-row items-center gap-2">
-                            <View className="w-8 h-8 rounded-full bg-surface-container-highest overflow-hidden">
-                                <Image source={{ uri: imageUri }} className="w-full h-full" />
+                            <View className="w-8 h-8 rounded-full bg-surface-container-highest overflow-hidden items-center justify-center">
+                                {imageUri ? (
+                                    <Image source={{ uri: imageUri }} className="w-full h-full" />
+                                ) : (
+                                    <Text className="text-on-surface-variant text-[10px] font-bold">{getInitials(name)}</Text>
+                                )}
                             </View>
                             <View>
                                 <Text className="font-bold text-sm text-on-surface">{name}</Text>
@@ -62,6 +74,21 @@ export const TimelineItem = ({ type, time, name, role, location, content, gyroDa
                         <View className="flex-row gap-4">
                             <Text className="text-[10px] text-on-surface-variant">X: <Text className="font-bold text-on-surface">{gyroData.x}</Text></Text>
                             <Text className="text-[10px] text-on-surface-variant">Y: <Text className="font-bold text-secondary">{gyroData.y}</Text></Text>
+                        </View>
+                    </View>
+                )}
+
+                {/* Foto Bukti Fisik Lapangan (dari Firebase Storage) */}
+                {reportPhotoUri && (
+                    <View className="mt-3 rounded-lg overflow-hidden border border-outline-variant">
+                        <Image
+                            source={{ uri: reportPhotoUri }}
+                            style={{ width: '100%', height: 160 }}
+                            resizeMode="cover"
+                        />
+                        <View className="flex-row items-center gap-1 px-2 py-1 bg-surface-container">
+                            <MaterialIcons name="photo-camera" size={10} color="#74777d" />
+                            <Text className="text-[9px] text-on-surface-variant font-mono">BUKTI FISIK LAPANGAN</Text>
                         </View>
                     </View>
                 )}

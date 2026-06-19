@@ -60,7 +60,7 @@ export default function AuthScreen() {
                         <View className="p-8">
                             <View className="flex-row items-center gap-2 text-primary mb-8">
                                 <MaterialIcons name="architecture" size={24} color="#041627" />
-                                <Text className="font-bold text-lg tracking-widest uppercase">MBG Monitor</Text>
+                                <Text className="font-bold text-lg tracking-widest uppercase">Monitoring Building with Gyro</Text>
                             </View>
 
                             <Text className="text-3xl font-bold text-on-surface mb-2">

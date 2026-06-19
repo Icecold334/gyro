@@ -1,18 +1,20 @@
 import { MaterialIcons } from '@expo/vector-icons'
 import * as ImagePicker from 'expo-image-picker'
-import { Gyroscope } from 'expo-sensors'
+import { DeviceMotion } from 'expo-sensors'
 import { Subscription } from 'expo-sensors/build/DeviceSensor'
 import {
   addDoc,
   collection,
+  doc,
   onSnapshot,
   serverTimestamp,
+  updateDoc,
 } from 'firebase/firestore'
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import React, { useEffect, useRef, useState } from 'react'
 import { Image, ScrollView, Text, TouchableOpacity, View } from 'react-native'
-import { auth, db, storage } from '../../firebaseConfig' // Sesuaikan dengan path file konfigurasi Anda
-import { useProjectStore } from '../../projectStore' // Tambahkan import store
+import { auth, db, storage } from '../../firebaseConfig'; // Sesuaikan dengan path file konfigurasi Anda
+import { useProjectStore } from '../../projectStore'; // Tambahkan import store
 interface PointOption {
   id: string
   pointName: string
@@ -100,15 +102,30 @@ export default function GyroScreen() {
         'reports',
       )
 
+      const rawX = Number(lockedDeg.x);
+      const rawY = Number(lockedDeg.y);
+
       await addDoc(reportsRef, {
         projectId: activeProjectId,
         pointName: selectedPointName,
-        gyroX: Number(lockedDeg.x),
-        gyroY: Number(lockedDeg.y),
+        gyroX: rawX,
+        gyroY: rawY,
         photoUrl: uploadedPhotoUrl, // 🚀 SEKARANG SUDAH TERIKAT DENGAN URL EMBED CLOUD STORAGE
         submittedBy: auth.currentUser?.uid || 'anonymous',
         timestamp: serverTimestamp(),
       })
+
+      // Update data point itu sendiri agar terpantau di monitor.tsx
+      const isCritical = Math.abs(rawX) > 2 || Math.abs(rawY) > 2;
+      const isWarn = Math.abs(rawX) > 1 || Math.abs(rawY) > 1;
+      const currentStatus = isCritical ? 'CRITICAL' : (isWarn ? 'WARN' : 'OK');
+
+      const pointRef = doc(db, 'projects', activeProjectId, 'points', selectedPointId);
+      await updateDoc(pointRef, {
+        gyroX: `${rawX >= 0 ? '+' : ''}${rawX.toFixed(3)}°`,
+        gyroY: `${rawY >= 0 ? '+' : ''}${rawY.toFixed(3)}°`,
+        currentStatus: currentStatus
+      });
 
       alert('Data Gyro & Bukti Fisik Berhasil Dikirim ke Cloud!')
 
@@ -192,28 +209,35 @@ export default function GyroScreen() {
 
   // Fungsi untuk mulai mendengarkan sensor
   const _subscribe = () => {
-    Gyroscope.setUpdateInterval(16) // ~60 FPS
+    DeviceMotion.setUpdateInterval(16) // ~60 FPS
 
     setSubscription(
-      Gyroscope.addListener((gyroscopeData) => {
-        // Jika status terkunci, hentikan semua kalkulasi angka dan pergerakan bola
+      DeviceMotion.addListener((motionData) => {
+        // Jika status terkunci, hentikan semua kalkulasi
         if (isLockedRef.current) return
 
-        setData(gyroscopeData)
+        const gravity = motionData.accelerationIncludingGravity
+        if (!gravity) return
+
+        // Menggunakan pembacaan gravitasi sumbu X dan Y
+        // Normalisasi agar kecocokan pergerakan bola pas
+        setData({ x: gravity.x, y: gravity.y, z: gravity.z })
 
         const alpha = 0.1
         setSmoothPos((prev) => {
-          const targetX = gyroscopeData.y * 220
-          const targetY = gyroscopeData.x * 220
+          // Mengalikan gravitasi ke pixel pergerakan balon waterpas
+          const targetX = gravity.x * -25
+          const targetY = gravity.y * 25
 
           return {
             x: prev.x + alpha * (targetX - prev.x),
             y: prev.y + alpha * (targetY - prev.y),
           }
         })
-      }),
+      })
     )
   }
+
   const _unsubscribe = () => {
     if (subscription) {
       subscription.remove()
@@ -221,14 +245,15 @@ export default function GyroScreen() {
     setSubscription(null)
   }
 
+
   useEffect(() => {
     _subscribe()
     return () => _unsubscribe()
   }, []) // Ubah kembali menjadi array kosong
 
-  // Konversi nilai kecepatan sudut ke estimasi derajat tampilan sederhana (-30 sampai +30 derajat)
-  const degX = (data.y * 57.2958).toFixed(2) // Tukar sumbu Y ke X untuk orientasi layar potret
-  const degY = (data.x * 57.2958).toFixed(2)
+  // Opsi Standar Penyelarasan Sumbu (Silakan ganti bagian ini)
+  const degX = (Math.atan2(-data.x, Math.sqrt(data.y * data.y + data.z * data.z)) * (180 / Math.PI)).toFixed(2)
+  const degY = (Math.atan2(-data.y, Math.sqrt(data.x * data.x + data.z * data.z)) * (180 / Math.PI)).toFixed(2)
 
   // Kalkulasi posisi titik (bubble) agar bergerak di dalam lingkaran placeholder (maksimal pergeseran 80px)
   const moveX = Math.max(-80, Math.min(80, smoothPos.x))

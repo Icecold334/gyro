@@ -1,10 +1,11 @@
 import { MaterialIcons } from '@expo/vector-icons'
 import { router } from 'expo-router'
-import { addDoc, collection, getDocs, onSnapshot, query, where } from 'firebase/firestore'
+import { addDoc, collection, deleteDoc, doc, getDocs, onSnapshot, query, where } from 'firebase/firestore'
 import React, { useEffect, useState } from 'react'
 import { Alert, ScrollView, Text, TouchableOpacity, View } from 'react-native'
-import { auth, db } from '../../firebaseConfig'; // Sesuaikan path
-import { useProjectStore } from '../../projectStore'; // Sesuaikan path
+import { auth, db } from '../../firebaseConfig'
+import { useProjectStore } from '../../projectStore'
+import CustomPromptModal from '../../components/CustomPromptModal'
 
 interface MeasuringPoint {
   id: string
@@ -30,76 +31,58 @@ const StatCard = ({ title, value, icon, colorClass, bgColorClass }: any) => (
 )
 
 // Komponen Card Detail Sensor
-const SensorCard = ({ title, status, gyroX, gyroY, sensorId, color, projectId, pointId }: any) => (
-  <View className="bg-white border border-outline-variant rounded-xl overflow-hidden mb-4 shadow-sm">
+const SensorCard = ({ title, status, gyroX, gyroY, sensorId, color, projectId, pointId, canDelete, onDelete }: any) => (
+  <TouchableOpacity
+    onPress={() =>
+      router.push({
+        pathname: '/details',
+        params: {
+          projectId,
+          pointId,
+          title,
+          status,
+          gyroX,
+          gyroY,
+          sensorId,
+          color
+        },
+      })
+    }
+    onLongPress={() => canDelete && onDelete && onDelete(pointId, title)}
+    className="bg-white border border-outline-variant rounded-xl overflow-hidden mb-3 shadow-sm"
+  >
     <View className="flex-row">
       {/* Warna status kiri */}
       <View style={{ backgroundColor: color }} className="w-1" />
 
-      <View className="p-4 flex-1">
-        <View className="flex-row justify-between items-center mb-3">
+      <View className="p-4 flex-1 flex-row justify-between items-center">
+        <View>
           <Text className="font-bold text-lg text-on-surface">{title}</Text>
-          <View className="px-2 py-1 bg-surface-container rounded-md">
-            <Text className="text-[10px] font-bold" style={{ color }}>
-              {status}
-            </Text>
-          </View>
-        </View>
-
-        <View className="flex-row gap-2">
-          <View className="bg-surface-container p-2 rounded flex-1">
-            <Text className="text-[9px] text-on-surface-variant uppercase">
-              Gyro X
-            </Text>
-            <Text className="font-bold" style={{ color }}>
-              {gyroX}
-            </Text>
-          </View>
-          <View className="bg-surface-container p-2 rounded flex-1">
-            <Text className="text-[9px] text-on-surface-variant uppercase">
-              Gyro Y
-            </Text>
-            <Text className="font-bold" style={{ color }}>
-              {gyroY}
-            </Text>
-          </View>
-        </View>
-
-        <View className="flex-row justify-between items-center mt-4 pt-3 border-t border-outline-variant">
-          <Text className="text-xs text-on-surface-variant">
+          <Text className="text-xs text-on-surface-variant mt-1">
             Sensor: {sensorId}
           </Text>
-          <TouchableOpacity
-            onPress={() =>
-              router.push({
-                pathname: '/details',
-                params: {
-                  projectId, // SINKRONISASI: Kirim Project ID
-                  pointId,   // SINKRONISASI: Kirim Point ID
-                  title,
-                  status,
-                  gyroX,
-                  gyroY,
-                  sensorId,
-                  color
-                },
-              })
-            }
-          >
-            <Text className="text-primary text-xs font-bold underline">
-              View Details
-            </Text>
-          </TouchableOpacity>
+        </View>
+        <View className="flex-row items-center gap-2">
+          {canDelete && (
+            <TouchableOpacity
+              onPress={() => onDelete && onDelete(pointId, title)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <MaterialIcons name="delete-outline" size={20} color="#c5221f" />
+            </TouchableOpacity>
+          )}
+          <MaterialIcons name="chevron-right" size={24} color="#74777d" />
         </View>
       </View>
     </View>
-  </View>
+  </TouchableOpacity>
 )
 
 export default function MonitorScreen() {
   const activeProjectId = useProjectStore((state) => state.activeProjectId)
   const [points, setPoints] = useState<MeasuringPoint[]>([])
   const [userRole, setUserRole] = useState<string | null>(null)
+  const [addPointModalVisible, setAddPointModalVisible] = useState(false)
   const handleCreatePoint = async (pointNameInput: string) => {
     if (!activeProjectId) return
     if (!pointNameInput.trim()) {
@@ -128,14 +111,29 @@ export default function MonitorScreen() {
   }
 
   const triggerAddPointPrompt = () => {
-    // Menggunakan Alert prompt bawaan untuk menerima input teks nama titik
-    Alert.prompt(
-      'Titik Ukur Baru',
-      'Masukkan nama titik (misal: Tiang Penyangga Utama):',
+    setAddPointModalVisible(true)
+  }
+
+  const handleDeletePoint = (pointId: string, pointName: string) => {
+    if (!activeProjectId) return
+    Alert.alert(
+      'Hapus Titik Ukur',
+      `Apakah Anda yakin ingin menghapus titik "${pointName}"? Seluruh riwayat laporan pada titik ini juga akan ikut terhapus.`,
       [
         { text: 'Batal', style: 'cancel' },
-        { text: 'Tambah', onPress: (text) => handleCreatePoint(text || '') },
-      ],
+        {
+          text: 'Hapus',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteDoc(doc(db, 'projects', activeProjectId, 'points', pointId))
+              Alert.alert('Sukses', `Titik "${pointName}" berhasil dihapus.`)
+            } catch (error: any) {
+              Alert.alert('Gagal', error.message)
+            }
+          },
+        },
+      ]
     )
   }
   useEffect(() => {
@@ -188,6 +186,8 @@ export default function MonitorScreen() {
   }, [activeProjectId])
   const totalPoints = points.length
   const safePoints = points.filter((p) => p.currentStatus === 'OK').length
+  const warnPoints = points.filter((p) => p.currentStatus === 'WARN').length
+  const criticalPoints = points.filter((p) => p.currentStatus === 'CRITICAL').length
   return (
     <View className="flex-1 bg-background">
       <ScrollView className="flex-1 px-4 py-6">
@@ -197,25 +197,6 @@ export default function MonitorScreen() {
         <Text className="text-sm text-on-surface-variant mb-6">
           Real-time telemetry and status overview.
         </Text>
-
-        {/* Stats Row */}
-        <View className="flex-row gap-2 mb-6">
-          <StatCard
-            title="Total"
-            value={totalPoints.toString()}
-            icon="sensors"
-            colorClass="text-on-surface"
-            bgColorClass="bg-surface-container-low"
-          />
-          <StatCard
-            title="Safe"
-            value={safePoints.toString()}
-            icon="check-circle"
-            colorClass="text-[#137333]"
-            bgColorClass="bg-[#e6f4ea]/20"
-          />
-        </View>
-
         {/* List Sensors */}
         {points.length === 0 ? (
           <View className="bg-white border border-outline-variant rounded-xl p-8 items-center mt-4">
@@ -235,30 +216,45 @@ export default function MonitorScreen() {
             return (
               <SensorCard
                 key={point.id}
-                pointId={point.id}               // SINKRONISASI: Lempar ID Titik
-                projectId={activeProjectId}      // SINKRONISASI: Lempar ID Proyek Aktif
+                pointId={point.id}
+                projectId={activeProjectId}
                 title={point.pointName}
                 status={point.currentStatus}
                 gyroX={point.gyroX}
                 gyroY={point.gyroY}
                 sensorId={point.sensorId}
                 color={statusColor}
+                canDelete={userRole === 'leader'}
+                onDelete={handleDeletePoint}
               />
             )
           })
         )}
       </ScrollView>
 
-      {/* Floating Action Button - Hanya muncul jika user adalah mandor */}
+      {/* FAB - Hanya muncul jika user adalah mandor/leader */}
       {userRole === 'leader' && (
         <TouchableOpacity
           onPress={triggerAddPointPrompt}
           className="absolute bottom-6 right-6 w-14 h-14 bg-primary rounded-xl items-center justify-center shadow-lg"
         >
           <MaterialIcons name="add" size={28} color="white" />
-
         </TouchableOpacity>
       )}
+
+      {/* Custom Prompt Modal - Tambah Titik Ukur (cross-platform) */}
+      <CustomPromptModal
+        visible={addPointModalVisible}
+        title="Titik Ukur Baru"
+        message="Masukkan nama titik pengukuran (misal: Tiang Penyangga Utama):"
+        placeholder="contoh: Pondasi Barat A"
+        confirmText="Tambah"
+        onConfirm={(text) => {
+          setAddPointModalVisible(false)
+          handleCreatePoint(text)
+        }}
+        onCancel={() => setAddPointModalVisible(false)}
+      />
     </View>
   )
 }

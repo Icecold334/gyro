@@ -1,21 +1,22 @@
-import { MaterialIcons } from '@expo/vector-icons'
-import * as Print from 'expo-print'
-import { router, useLocalSearchParams } from 'expo-router'
-import * as Sharing from 'expo-sharing'
+import { MaterialIcons } from '@expo/vector-icons';
+import * as Print from 'expo-print';
+import { router, useLocalSearchParams } from 'expo-router';
+import * as Sharing from 'expo-sharing';
 import React, { useEffect, useState } from 'react'; // Tambahkan useEffect
 import {
+  Alert,
   Dimensions,
   Image,
   ScrollView,
   Text,
   TouchableOpacity,
-  View,
-} from 'react-native'
-import { LineChart } from 'react-native-chart-kit'
-import { SafeAreaView } from 'react-native-safe-area-context'
+  View
+} from 'react-native';
+import { LineChart } from 'react-native-chart-kit';
+import { SafeAreaView } from 'react-native-safe-area-context';
 // Tambahkan import Firebase
-import { collection, onSnapshot, orderBy, query } from 'firebase/firestore'
-import { db } from '../firebaseConfig'
+import { collection, deleteDoc, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { auth, db } from '../firebaseConfig';
 
 interface FirebaseReport {
   id: string
@@ -48,6 +49,52 @@ export default function DetailsScreen() {
 
   const [activeFilter, setActiveFilter] = useState('All Reports')
   const [reports, setReports] = useState<FirebaseReport[]>([])
+  const [userRole, setUserRole] = useState<string | null>(null)  // ✅ Deklarasi state yang hilang
+  // State for floating options menu (toast)
+  const [showOptionsMenu, setShowOptionsMenu] = useState(false);
+  // Auto-hide toast after 5 seconds
+  useEffect(() => {
+    if (showOptionsMenu) {
+      const timer = setTimeout(() => setShowOptionsMenu(false), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [showOptionsMenu]);
+
+
+  useEffect(() => {
+    if (!projectId) return;
+    const checkRole = async () => {
+      const q = query(
+        collection(db, 'project_members'),
+        where('projectId', '==', projectId),
+        where('userId', '==', auth.currentUser?.uid),
+        limit(1)
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        setUserRole(snap.docs[0].data().role);
+      }
+    };
+    checkRole();
+  }, [projectId]);
+
+  const handleDeletePoint = async () => {
+    try {
+      await deleteDoc(doc(db, 'projects', projectId, 'points', pointId));
+      Alert.alert('Sukses', 'Titik ukur berhasil dihapus');
+      router.back();
+    } catch (error) {
+      console.error('Gagal menghapus titik:', error);
+      Alert.alert('Error', 'Gagal menghapus titik ukur');
+    }
+  };
+
+  const openOptionsMenu = () => setShowOptionsMenu(true);
+  const closeOptionsMenu = () => setShowOptionsMenu(false);
+
+  const handleMoreOptions = () => {
+    openOptionsMenu();
+  }
   // Helper untuk membersihkan simbol "°" agar bisa dibaca sebagai angka oleh grafik
   const parseTilt = (val: string) => {
     return parseFloat(val.replace(/[^\d.-]/g, '')) || 0
@@ -146,8 +193,20 @@ export default function DetailsScreen() {
       alert(`Gagal mengeksport PDF: ${error.message}`)
     }
   }
-  const currentX = parseTilt(gyroX)
-  const currentY = parseTilt(gyroY)
+  const latestReport = reports.length > 0 ? reports[0] : null;
+  const displayStatus = latestReport ? latestReport.type.toUpperCase() : status;
+  const displayX = latestReport ? latestReport.xValue : gyroX;
+  const displayY = latestReport ? latestReport.yValue : gyroY;
+
+  let displayColor = color;
+  if (latestReport) {
+    if (latestReport.type === 'Critical') displayColor = '#ba1a1a';
+    else if (latestReport.type === 'Warning') displayColor = '#b06000';
+    else displayColor = '#137333';
+  }
+
+  const currentX = parseTilt(displayX)
+  const currentY = parseTilt(displayY)
 
   // Konfigurasi data dataset grafik X dan Y
   const chartData = {
@@ -188,7 +247,7 @@ export default function DetailsScreen() {
     const reportsRef = collection(db, 'projects', projectId, 'points', pointId, 'reports')
     const q = query(reportsRef, orderBy('timestamp', 'desc'))
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
       const loadedReports: FirebaseReport[] = []
 
       snapshot.forEach((docSnap) => {
@@ -224,7 +283,7 @@ export default function DetailsScreen() {
 
         loadedReports.push({
           id: docSnap.id,
-          author: data.submittedBy === 'anonymous' ? 'Teknisi Lapangan' : `User ID: ${data.submittedBy.substring(0, 6)}`,
+          author: data.submittedBy || 'anonymous', // sementara simpan UID, diganti di bawah
           date: formattedDate,
           type: reportType,
           badgeBg: badgeBg,
@@ -241,6 +300,26 @@ export default function DetailsScreen() {
           rawTimestamp: data.timestamp
         })
       })
+
+      // Resolve nama nyata dari collection users berdasarkan UID submittedBy
+      for (let i = 0; i < loadedReports.length; i++) {
+        const uid = loadedReports[i].author
+        if (!uid || uid === 'anonymous') {
+          loadedReports[i].author = 'Teknisi Lapangan'
+          continue
+        }
+        try {
+          const userDoc = await getDoc(doc(db, 'users', uid))
+          if (userDoc.exists()) {
+            const userData = userDoc.data()
+            loadedReports[i].author = userData.displayName || userData.email || 'Teknisi Lapangan'
+          } else {
+            loadedReports[i].author = 'Teknisi Lapangan'
+          }
+        } catch {
+          loadedReports[i].author = 'Teknisi Lapangan'
+        }
+      }
 
       setReports(loadedReports)
     })
@@ -279,9 +358,22 @@ export default function DetailsScreen() {
           >
             <MaterialIcons name="share" size={20} color="#44474c" />
           </TouchableOpacity>
-          <TouchableOpacity className="p-2 active:scale-95 rounded-full">
-            <MaterialIcons name="more-vert" size={20} color="#44474c" />
-          </TouchableOpacity>
+          {userRole === 'leader' && (
+            <TouchableOpacity onPress={openOptionsMenu} className="p-2 active:scale-95 rounded-full">
+              <MaterialIcons name="more-vert" size={20} color="#44474c" />
+            </TouchableOpacity>
+          )}
+          {/* Floating Options Overlay (Toast) */}
+          {showOptionsMenu && (
+            <View className="absolute top-16 left-1/2 -translate-x-1/2 bg-white border border-outline-variant rounded-lg shadow-lg z-50 p-2 w-48">
+              <TouchableOpacity onPress={() => { closeOptionsMenu(); handleDeletePoint(); }} className="p-2">
+                <Text className="text-sm text-[#ba1a1a] font-bold text-center">Hapus Titik</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={closeOptionsMenu} className="p-2">
+                <Text className="text-sm text-on-surface-variant">Batal</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </View>
 
@@ -300,19 +392,19 @@ export default function DetailsScreen() {
               <View className="flex-row items-center gap-2">
                 <View
                   className="w-3 h-3 rounded-full bg-error"
-                  style={{ backgroundColor: color }}
+                  style={{ backgroundColor: displayColor }}
                 />
-                <Text className="text-lg font-bold" style={{ color: color }}>
-                  {status}
+                <Text className="text-lg font-bold" style={{ color: displayColor }}>
+                  {displayStatus}
                 </Text>
               </View>
             </View>
-            <View className="items-end">
+            <View className="items-end max-w-[50%]">
               <Text className="text-[10px] font-bold text-on-surface-variant mb-1 uppercase tracking-wider">
                 Last Sync
               </Text>
-              <Text className="text-sm font-semibold text-on-surface">
-                2 mins ago
+              <Text className="text-sm font-semibold text-on-surface text-right">
+                {latestReport ? latestReport.date : '-'}
               </Text>
             </View>
           </View>
@@ -324,7 +416,7 @@ export default function DetailsScreen() {
                 Latest X-Tilt
               </Text>
               <Text className="text-2xl font-black text-primary font-mono">
-                {gyroX}
+                {displayX}
               </Text>
             </View>
             <View className="flex-1">
@@ -332,7 +424,7 @@ export default function DetailsScreen() {
                 Latest Y-Tilt
               </Text>
               <Text className="text-2xl font-black text-primary font-mono">
-                {gyroY}
+                {displayY}
               </Text>
             </View>
           </View>
@@ -381,8 +473,8 @@ export default function DetailsScreen() {
                 key={filter}
                 onPress={() => setActiveFilter(filter)}
                 className={`px-4 py-2 rounded-full border ${isActive
-                    ? 'bg-primary border-primary'
-                    : 'bg-surface-container-high border-outline-variant'
+                  ? 'bg-primary border-primary'
+                  : 'bg-surface-container-high border-outline-variant'
                   }`}
               >
                 <Text
@@ -452,11 +544,6 @@ export default function DetailsScreen() {
           ))}
         </View>
       </ScrollView>
-
-      {/* Floating Action Button (FAB) */}
-      <TouchableOpacity className="absolute bottom-6 right-6 w-14 h-14 bg-primary rounded-xl items-center justify-center shadow-lg active:scale-95">
-        <MaterialIcons name="add-a-photo" size={28} color="white" />
-      </TouchableOpacity>
     </SafeAreaView>
   )
 }

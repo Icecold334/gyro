@@ -2,19 +2,20 @@ import { MaterialIcons } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react'; // Tambah useEffect & useState
 import { Alert, Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 // Tambahkan import Firebase dan Zustand Store
-import { collection, deleteDoc, doc, onSnapshot, query, where } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { collection, deleteDoc, doc, getDoc, onSnapshot, query, where } from 'firebase/firestore';
+import { auth, db } from '../../firebaseConfig';
 import { useProjectStore } from '../../projectStore';
 
 interface Member {
     id: string;
     userId: string;
     projectName: string;
-    role: 'leader' | 'tukang';
+    role: 'leader' | 'member';
     joinedAt: string;
     // Kita tambahkan field nama untuk di-render, jika di collection belum ada, 
     // nanti kita bisa pakai data fallback atau gabungkan dari collection users.
     displayName?: string;
+    photoURL?: string;
 }
 
 const getInitials = (name: string) => {
@@ -25,7 +26,7 @@ const getInitials = (name: string) => {
 };
 
 // Komponen untuk Card Member
-const MemberCard = ({ id, name, role, avatar, isFounder = false, onKick }) => (
+const MemberCard = ({ id, name, role, avatar, isFounder = false, canKick = false, onKick }) => (
     <View className="flex-row items-center justify-between p-4 bg-white border border-[#c4c6cd] rounded-xl mb-3">
         <View className="flex-row items-center gap-4">
             <View className="relative w-12 h-12 rounded-full overflow-hidden bg-[#e9e7e9] items-center justify-center">
@@ -45,7 +46,7 @@ const MemberCard = ({ id, name, role, avatar, isFounder = false, onKick }) => (
             </View>
         </View>
 
-        {!isFounder && (
+        {canKick && (
             <TouchableOpacity
                 onPress={() => onKick(id, name)} // TAMBAHKAN BARIS INI
                 className="w-10 h-10 items-center justify-center rounded-lg hover:bg-[#ffdad6]"
@@ -59,6 +60,10 @@ const MemberCard = ({ id, name, role, avatar, isFounder = false, onKick }) => (
 export default function TeamScreen() {
     const activeProjectId = useProjectStore((state) => state.activeProjectId);
     const [members, setMembers] = useState<Member[]>([]);
+
+    const currentUserRole = members.find(m => m.userId === auth.currentUser?.uid)?.role;
+    const isCurrentUserFounder = currentUserRole === 'leader';
+
     const handleKickMember = (membershipId: string, memberName: string) => {
         Alert.alert(
             'Konfirmasi Kick',
@@ -89,21 +94,35 @@ export default function TeamScreen() {
         const q = query(membersRef, where('projectId', '==', activeProjectId));
         console.log(query(collection(db, 'users')));
 
-        const unsubscribe = onSnapshot(q, (snapshot) => {
+        const unsubscribe = onSnapshot(q, async (snapshot) => {
             const memberList: Member[] = [];
-            snapshot.forEach((doc) => {
-                const data = doc.data();
-                console.log(data);
+            snapshot.forEach((docSnap) => {
+                const data = docSnap.data();
 
                 memberList.push({
-                    id: doc.id,
+                    id: docSnap.id,
                     userId: data.userId,
                     projectName: data.projectName,
                     role: data.role,
                     joinedAt: data.joinedAt,
-                    displayName: data.displayName || 'Pekerja Lapangan', // Fallback nama sementara
                 });
             });
+
+            for (let i = 0; i < memberList.length; i++) {
+                try {
+                    const userDoc = await getDoc(doc(db, 'users', memberList[i].userId));
+                    if (userDoc.exists()) {
+                        const userData = userDoc.data();
+                        memberList[i].displayName = userData.displayName || userData.email || 'Pekerja Lapangan';
+                        memberList[i].photoURL = userData.photoURL;
+                    } else {
+                        memberList[i].displayName = 'Pekerja Lapangan';
+                    }
+                } catch (e) {
+                    memberList[i].displayName = 'Pekerja Lapangan';
+                }
+            }
+
             setMembers(memberList);
         });
 
@@ -116,12 +135,9 @@ export default function TeamScreen() {
                 <View className="flex-row items-end justify-between mb-6">
                     <View>
                         <Text className="text-[18px] font-semibold text-[#1b1c1d] mb-1">Project Directory</Text>
-                        <Text className="text-[16px] text-[#44474c]">Active personnel on Site Alpha-7.</Text>
+                        <Text className="text-[16px] text-[#44474c]">Active personnel on this project.</Text>
                     </View>
-                    <TouchableOpacity className="flex-row items-center justify-center h-10 px-4 bg-[#041627] rounded-lg">
-                        <MaterialIcons name="person-add" size={18} color="#ffffff" style={{ marginRight: 8 }} />
-                        <Text className="text-[#ffffff] text-[12px] font-medium">Invite</Text>
-                    </TouchableOpacity>
+
                 </View>
                 <ScrollView showsVerticalScrollIndicator={false}>
                     {members.length === 0 ? (
@@ -134,9 +150,10 @@ export default function TeamScreen() {
                                 key={member.id}
                                 id={member.id} // Kirim ID Dokumen
                                 name={member.displayName || 'Pekerja Lapangan'}
-                                role={member.role === 'leader' ? 'Leader / Creator' : 'Member'}
+                                role={member.role === 'leader' ? 'Leader' : 'Member'}
                                 isFounder={member.role === 'leader'}
-                                avatar={null}
+                                canKick={isCurrentUserFounder && member.role !== 'leader'}
+                                avatar={member.photoURL}
                                 onKick={handleKickMember} // Kirim Fungsi Hapus
                             />
                         ))

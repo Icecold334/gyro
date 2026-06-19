@@ -3,7 +3,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 // Impor Firebase & Zustand Store
-import { collectionGroup, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { collectionGroup, onSnapshot, orderBy, query, where, getDoc, doc } from 'firebase/firestore';
 import { db } from '../../firebaseConfig';
 import { useProjectStore } from '../../projectStore';
 
@@ -16,6 +16,8 @@ interface DynamicTimelineItem {
     location: string;
     content: string;
     gyroData?: { x: string; y: string };
+    avatarUri?: string;   // Foto profil user (untuk avatar bubble)
+    imageUri?: string;    // Foto bukti fisik lapangan (dari Storage)
 }
 
 export default function TimelineScreen() {
@@ -42,7 +44,7 @@ export default function TimelineScreen() {
             orderBy('timestamp', 'desc')
         );
 
-        const unsubscribe = onSnapshot(q, (snapshot) => {
+        const unsubscribe = onSnapshot(q, async (snapshot) => {
             const loadedLogs: DynamicTimelineItem[] = [];
 
             snapshot.forEach((docSnap) => {
@@ -60,16 +62,41 @@ export default function TimelineScreen() {
                     id: docSnap.id,
                     type: isAlert ? 'alert' : 'inspection',
                     time: timeString,
-                    name: data.submittedBy === 'anonymous' ? 'Teknisi' : `User ${data.submittedBy.substring(0, 5)}`,
+                    name: data.submittedBy, // Store userId temporarily
                     role: 'Field Worker',
-                    location: data.pointName || 'Unknown Point', // Nama Titik Ukur
+                    location: data.pointName || 'Unknown Point',
                     content: `Telah melakukan penguncian telemetri pada koordinat sumbu struktur.`,
                     gyroData: {
                         x: `${rawX >= 0 ? '+' : ''}${rawX.toFixed(3)}°`,
                         y: `${rawY >= 0 ? '+' : ''}${rawY.toFixed(3)}°`
-                    }
+                    },
+                    imageUri: data.photoUrl || undefined,  // ✅ Foto bukti fisik dari Storage
+                    avatarUri: undefined,                  // Diisi saat fetch user di bawah
                 });
             });
+
+            // Fetch actual user names
+            for (let i = 0; i < loadedLogs.length; i++) {
+                const userId = loadedLogs[i].name;
+                if (!userId || userId === 'anonymous') {
+                    loadedLogs[i].name = 'Teknisi';
+                    continue;
+                }
+
+                try {
+                    const userDoc = await getDoc(doc(db, 'users', userId));
+                    if (userDoc.exists()) {
+                        const userData = userDoc.data();
+                        loadedLogs[i].name = userData.displayName || userData.email || `User ${userId.substring(0, 5)}`;
+                        loadedLogs[i].avatarUri = userData.photoURL || undefined; // ✅ Foto profil untuk avatar
+                        // imageUri sudah diisi dari data.photoUrl (bukti fisik), tidak di-overwrite
+                    } else {
+                        loadedLogs[i].name = `User ${userId.substring(0, 5)}`;
+                    }
+                } catch (e) {
+                    loadedLogs[i].name = `User ${userId.substring(0, 5)}`;
+                }
+            }
 
             setLogs(loadedLogs);
             setLoading(false);
@@ -107,6 +134,8 @@ export default function TimelineScreen() {
                             location={log.location}
                             content={log.content}
                             gyroData={log.gyroData}
+                            imageUri={log.avatarUri}   // avatar user di bubble
+                            reportPhotoUri={log.imageUri} // foto bukti fisik lapangan
                         />
                     ))
                 )}
